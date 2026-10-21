@@ -41,16 +41,12 @@ $ wayfind -h
 
  Active Directory domain scan
 
- -d,  --domain              Domain (corp.local)
- -dc, --dc-ip               Domain controller IP
- -u,  --username            Username
- -p,  --password            Password
- -H,  --hashes              NTLM hash (NT or LM:NT)
-      --ldaps               Use LDAPS
-      --profile             recon | audit | offensive
- -c,  --check               One check or category
- -L,  --list                List profiles and checks
- -o,  --output              Output directory
+ Target   -d domain · -dc DC IP · --ldaps · --dns
+ Auth     -u · -p · -H · -k
+ Scan     --profile recon|audit|offensive · -c check · -L
+ Output   -o · -v
+
+$ wayfind -hh         高级选项（socks / ccache / pfx / loot / BloodHound collection）
 ```
 
 扫完打开控制台，导入同一份 `findings.json`：

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Annotated, List, Optional
 
 import typer
+from typer.core import TyperGroup
 
 from . import __version__
 from .config import DOMAIN_FUNCTIONAL_LEVELS
@@ -30,12 +31,47 @@ from .utils.clock import warn_clock_skew
 from .enumeration import ADEnumerator
 from .checks import SecurityChecker
 
+
+class WayfindGroup(TyperGroup):
+    def collect_usage_pieces(self, ctx: typer.Context) -> list[str]:
+        return [self.options_metavar] if self.options_metavar else []
+
+
 app = typer.Typer(
     name="wayfind",
-    help="Active Directory Wayfind Tool",
+    help="Active Directory domain scan",
     add_completion=False,
-    context_settings={"help_option_names": ["-h", "--help"]}
+    pretty_exceptions_enable=False,
+    cls=WayfindGroup,
+    context_settings={"help_option_names": []},
 )
+
+
+def _opt(*decls: str, help: str, panel: str, hidden: bool = False, **kwargs):
+    return typer.Option(*decls, help=help, rich_help_panel=panel, hidden=hidden, **kwargs)
+
+
+def _emit_help(ctx: typer.Context, full: bool = False) -> None:
+    revealed = []
+    if full:
+        for param in ctx.command.params:
+            if getattr(param, "hidden", False):
+                param.hidden = False
+                revealed.append(param)
+    try:
+        text = ctx.get_help()
+        if text:
+            typer.echo(text, color=ctx.color)
+    finally:
+        for param in revealed:
+            param.hidden = True
+
+
+def _help_callback(ctx: typer.Context, param: typer.CallbackParam, value: int):
+    if ctx.resilient_parsing or not value:
+        return
+    _emit_help(ctx, full=value >= 2)
+    raise typer.Exit()
 
 
 NETEXEC_MODULE_REQUIREMENTS = {
@@ -50,28 +86,6 @@ def _version_callback(value: bool):
     if value:
         print(f"wayfind {__version__}")
         raise typer.Exit(0)
-
-
-def _print_short_usage():
-    print(f"""wayfind {__version__}
-Active Directory security audit tool
-
-Usage:
-  wayfind -d <domain> -dc <dc-ip> -u <user> -p <password>
-  wayfind -d <domain> -dc <dc-ip> -u <user> -H <LM:NT>
-  wayfind --profile recon|audit|offensive ...
-  wayfind --check anonymous ...
-
-Quick commands:
-  wayfind -L                 List categories and profiles
-  wayfind --check anonymous  Run anonymous enum (timeroast / SMB null / LDAP anon)
-  wayfind --check adcs ...   Run a single check
-  wayfind --version          Show version
-
--dc / --dc-ip is the DC IP. --dc-host is the hostname. --socks is pass-through.
-DNS is passed to tools as --dns-server (default: DC IP). The system resolver is not changed.
-
-Run 'wayfind --help' for all options.""")
 
 
 def _check_netexec_module_requirements(check_names: List[str], required: bool = False) -> bool:
@@ -132,7 +146,7 @@ def _build_target(
         logger.error("[-] Missing required option: --domain / -d")
         raise typer.Exit(1)
     if not server:
-        logger.error("[-] Missing required option: --server / -dc / --dc-ip")
+        logger.error("[-] Missing required option: --dc-ip / -dc")
         raise typer.Exit(1)
     if not username and profile != "recon":
         logger.error("[-] Missing required option: --username / -u")
@@ -162,40 +176,36 @@ def _build_target(
 
 @app.callback(invoke_without_command=True)
 def main(
-    domain: Annotated[Optional[str], typer.Option("--domain", "-d", help="Domain name (e.g., contoso.com)")] = None,
-    server: Annotated[Optional[str], typer.Option("--server", "-dc", "--dc-ip", help="Domain controller IP")] = None,
-    dc_host: Annotated[Optional[str], typer.Option("--dc-host", help="DC hostname (separate from --dc-ip)")] = None,
-    socks: Annotated[Optional[str], typer.Option("--socks", help="SOCKS proxy host:port (pass-through to tools that support it)")] = None,
-    username: Annotated[Optional[str], typer.Option("--username", "-u", help="Username for authentication")] = None,
-    password: Annotated[Optional[str], typer.Option("--password", "-p", help="Password for authentication")] = None,
-    hashes: Annotated[Optional[str], typer.Option("--hashes", "-H", help="NTLM hash (NT or LM:NT)")] = None,
-    kerberos: Annotated[bool, typer.Option("--kerberos", "-k", help="Forward Kerberos auth to nxc/certipy")] = False,
-    dns: Annotated[Optional[str], typer.Option("--dns", help="DNS server for tools (default: DC IP). Does not change system resolver.")] = None,
-    aes: Annotated[Optional[str], typer.Option("--aes", help="AES key for Kerberos")] = None,
-    ccache: Annotated[Optional[str], typer.Option("--ccache", help="Kerberos ccache path (sets KRB5CCNAME)")] = None,
-    pfx: Annotated[Optional[str], typer.Option("--pfx", help="PFX certificate path")] = None,
-    as_identity: Annotated[Optional[str], typer.Option("--as", help="Run as a looted identity (SAM). Requires --loot")] = None,
-    loot: Annotated[Optional[Path], typer.Option("--loot", help="Path to loot.json from a previous run")] = None,
-    profile: Annotated[str, typer.Option("--profile", help="Run profile: recon|anonymous | audit | offensive (default audit)")] = DEFAULT_PROFILE,
-    output: Annotated[Optional[Path], typer.Option("--output", "-o", help="Output directory")] = None,
-    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Verbose output")] = False,
-    skip_bloodhound: Annotated[bool, typer.Option("--skip-bloodhound", help="Skip BloodHound enumeration")] = False,
-    bloodhound_options: Annotated[str, typer.Option("--bloodhound-options", help="BloodHound collection method: all, default, sessions, acl, computer")] = "all",
-    skip_roasting: Annotated[bool, typer.Option("--skip-roasting", help="Skip Kerberoast/AS-REP roast")] = False,
-    use_ldaps: Annotated[bool, typer.Option("--ldaps", help="Use LDAPS instead of LDAP")] = False,
-    include_ip: Annotated[Optional[List[str]], typer.Option("--include-ip", help="Only include IP/CIDR or file of IPs/CIDRs in non-DC host scanning. Can be repeated or comma-separated.")] = None,
-    exclude_ip: Annotated[Optional[List[str]], typer.Option("--exclude-ip", help="Exclude IP/CIDR or file of IPs/CIDRs from non-DC host scanning. Can be repeated or comma-separated.")] = None,
-    check: Annotated[Optional[str], typer.Option("--check", "-c", help="Check or category: gpp, anonymous, directory, host, probe")] = None,
-    list_checks: Annotated[bool, typer.Option("--list", "-L", help="List categories, checks, and profiles")] = False,
-    version: Annotated[Optional[bool], typer.Option("--version", callback=_version_callback, is_eager=True, help="Show version and exit")] = None,
+    ctx: typer.Context,
+    domain: Annotated[Optional[str], _opt("--domain", "-d", help="Domain", panel="Target")] = None,
+    server: Annotated[Optional[str], _opt("--dc-ip", "-dc", "--server", help="Domain controller IP", panel="Target")] = None,
+    dc_host: Annotated[Optional[str], _opt("--dc-host", help="DC hostname", panel="Target")] = None,
+    use_ldaps: Annotated[bool, _opt("--ldaps", help="Use LDAPS", panel="Target")] = False,
+    dns: Annotated[Optional[str], _opt("--dns", help="DNS for tools (default: DC IP)", panel="Target")] = None,
+    username: Annotated[Optional[str], _opt("--username", "-u", help="Username", panel="Auth")] = None,
+    password: Annotated[Optional[str], _opt("--password", "-p", help="Password", panel="Auth")] = None,
+    hashes: Annotated[Optional[str], _opt("--hashes", "-H", help="NTLM hash (NT or LM:NT)", panel="Auth")] = None,
+    kerberos: Annotated[bool, _opt("--kerberos", "-k", help="Kerberos", panel="Auth")] = False,
+    profile: Annotated[str, _opt("--profile", help="recon | audit | offensive", panel="Scan")] = DEFAULT_PROFILE,
+    check: Annotated[Optional[str], _opt("--check", "-c", help="Check or category", panel="Scan")] = None,
+    skip_bloodhound: Annotated[bool, _opt("--skip-bloodhound", help="Skip BloodHound", panel="Scan")] = False,
+    list_checks: Annotated[bool, _opt("--list", "-L", help="List checks and profiles", panel="Scan")] = False,
+    output: Annotated[Optional[Path], _opt("--output", "-o", help="Output directory", panel="Output")] = None,
+    verbose: Annotated[bool, _opt("--verbose", "-v", help="Verbose", panel="Output")] = False,
+    socks: Annotated[Optional[str], _opt("--socks", help="SOCKS proxy host:port", panel="Advanced", hidden=True)] = None,
+    aes: Annotated[Optional[str], _opt("--aes", help="Kerberos AES key", panel="Advanced", hidden=True)] = None,
+    ccache: Annotated[Optional[str], _opt("--ccache", help="Kerberos ccache (KRB5CCNAME)", panel="Advanced", hidden=True)] = None,
+    pfx: Annotated[Optional[str], _opt("--pfx", help="PFX certificate", panel="Advanced", hidden=True)] = None,
+    as_identity: Annotated[Optional[str], _opt("--as", help="Looted identity (needs --loot)", panel="Advanced", hidden=True)] = None,
+    loot: Annotated[Optional[Path], _opt("--loot", help="loot.json from a previous run", panel="Advanced", hidden=True)] = None,
+    bloodhound_options: Annotated[str, _opt("--bloodhound-options", help="BloodHound collection: all, default, sessions, acl, computer", panel="Advanced", hidden=True)] = "all",
+    skip_roasting: Annotated[bool, _opt("--skip-roasting", help="Skip Kerberoast / AS-REP roast", panel="Advanced", hidden=True)] = False,
+    include_ip: Annotated[Optional[List[str]], _opt("--include-ip", help="Limit host scan to IP/CIDR or file", panel="Advanced", hidden=True)] = None,
+    exclude_ip: Annotated[Optional[List[str]], _opt("--exclude-ip", help="Exclude IP/CIDR or file from host scan", panel="Advanced", hidden=True)] = None,
+    version: Annotated[Optional[bool], _opt("--version", help="Show version", panel="Output", callback=_version_callback, is_eager=True)] = None,
+    _help: Annotated[int, _opt("--help", "-h", help="Show help; -hh for advanced options", panel="Output", count=True, is_eager=True, callback=_help_callback, metavar="", show_default=False)] = 0,
 ):
-    """
-    Active Directory Wayfind Tool.
-
-    Default profile is audit (directory enum, read-only).
-    --check anonymous runs unauthenticated enum (timeroast / SMB null / LDAP anon).
-    Offensive adds host spray, TGS, Zerologon/NoPac.
-    """
+    """Active Directory domain scan."""
     set_verbose(verbose)
     logger = get_logger(verbose)
 
@@ -204,7 +214,7 @@ def main(
         raise typer.Exit(0)
 
     if not domain and not server and not username and not check:
-        _print_short_usage()
+        _emit_help(ctx)
         raise typer.Exit(0)
 
     try:
