@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+results/
+.claude/
+.DS_Store
+*.pfx
+*.ccache

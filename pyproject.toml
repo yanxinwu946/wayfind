@@ -1,0 +1,25 @@
+[project]
+name = "wayfind"
+version = "0.1.6"
+description = "Active Directory domain enumeration CLI"
+authors = [
+    { name = "Sublarge" },
+]
+requires-python = ">=3.10"
+dependencies = [
+    "impacket>=0.11.0",
+    "ldap3==2.10.2rc4",
+    "rich>=13.0.0",
+    "typer>=0.9.0",
+    "pycryptodomex>=3.20.0",
+]
+
+[project.scripts]
+wayfind = "wayfind.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wayfind"]
